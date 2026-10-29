@@ -1,5 +1,7 @@
 # module-crew-lead
 
+> **Retired 2026-10-28.** Every crew role is now its own Element in the one role list, `RasaOS/role-<id>` (vsi-tenant ADR 2026-10-28-one-role-list). This repo is archived; its cards live on as role-crew-manager / role-child-lead, the `-lead` roles, and the member roles (the `manager` member is `role-board-manager`).
+
 **Version:** 0.1.0 · `rasa.module.crew.lead` · public
 
 The **lead tier** of a galt crew, as a RasaOS module: the lead tier of a galt crew (galt ADR 0052 D1, 0054 D5): lead cards, each a lead's whole conduct — how it runs a request from ask to landing and whom it hires.
