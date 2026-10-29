@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""bin/check-cards — the release gate for a crew tier module. Exit 1 on any problem.
+
+  1. rasa.json: kind module, name rasa.module.crew.<tier>, no permissions.
+  2. One version: VERSION, rasa.json, plugin.json, top CHANGELOG heading, README **Version:** line.
+  3. Every card under content/crew/ has a header of known keys, a blank line and a body; names are lowercase-dash.
+  4. No secret-shaped strings (the repo is public) and no canon §8 vocabulary.
+  5. The canonical validator, when RASA_SCHEMA_DIR names a RasaOS/schema checkout (a skip is not a pass).
+"""
+import json, os, re, subprocess, sys
+from pathlib import Path
+ROOT = Path(__file__).resolve().parent.parent
+KEYS = {"leads": {"team", "finish", "standard", "stage-words", "settings", "tags", "when"},
+        "members": {"writes", "claims", "board", "saves", "web", "stages", "when", "tags"},
+        "manager": {"tags", "when"}}
+SECRETS = [re.compile(x) for x in (r"gh[pousr]_[A-Za-z0-9]{30,}", r"github_pat_[A-Za-z0-9_]{30,}", r"sk-[A-Za-z0-9_-]{20,}",
+           r"AIza[0-9A-Za-z_-]{30,}", r"xox[abposr]-[A-Za-z0-9-]{10,}", r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY-----")]
+FORBIDDEN = ["MANIFEST.json", "foundation.json", "manifest contract", "bootstrap/"]
+bad = []
+rasa = json.loads((ROOT / "rasa.json").read_text())
+tier = rasa.get("rasa", {}).get("crew_tier")
+if rasa.get("kind") != "module" or rasa.get("name") != f"rasa.module.crew.{tier}":
+    bad.append(f"rasa.json must be kind module named rasa.module.crew.{tier}")
+if rasa.get("permissions"):
+    bad.append("rasa.json permissions must be []")
+ver = (ROOT / "VERSION").read_text().strip()
+plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+cl = re.search(r"^## (\d+\.\d+\.\d+)", (ROOT / "CHANGELOG.md").read_text(), re.M)
+rd = re.search(r"\*\*Version:\*\*\s*(\d+\.\d+\.\d+)", (ROOT / "README.md").read_text())
+for where, v in {"rasa.json": rasa.get("version"), "plugin.json": plugin.get("version"),
+                 "CHANGELOG.md": cl and cl.group(1), "README.md": rd and rd.group(1)}.items():
+    if v != ver:
+        bad.append(f"{where} says {v!r}; VERSION says {ver!r}")
+n = 0
+for f in sorted((ROOT / "content/crew").rglob("*.md")):
+    if f.name == "README.md" or f.parent.name not in KEYS:
+        continue
+    n += 1
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", f.stem):
+        bad.append(f"{f.relative_to(ROOT)}: name must be lowercase letters, digits and dashes")
+    lines = f.read_text().split("\n")
+    i = 0
+    while i < len(lines) and re.match(r"^[a-z][a-z_-]*:", lines[i]):
+        k = lines[i].split(":", 1)[0]
+        if k not in KEYS[f.parent.name]:
+            bad.append(f"{f.relative_to(ROOT)}: unknown header key {k!r}")
+        i += 1
+    if i == 0 or i >= len(lines) or lines[i].strip() != "" or not "".join(lines[i:]).strip():
+        bad.append(f"{f.relative_to(ROOT)}: needs header lines, a blank line, then a body")
+files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+for rel in files:
+    if rel == "bin/check-cards":
+        continue
+    try:
+        t = (ROOT / rel).read_text()
+    except (UnicodeDecodeError, OSError):
+        continue
+    bad += [f"{rel}: uses {w!r}" for w in FORBIDDEN if w in t]
+    bad += [f"{rel}: holds something shaped like a secret" for rx in SECRETS if rx.search(t)]
+schema = os.environ.get("RASA_SCHEMA_DIR")
+if schema:
+    s = Path(schema).expanduser()
+    py = s / ".venv/bin/python3"
+    r = subprocess.run([str(py) if py.exists() else sys.executable, str(s / "bin/validate"), str(ROOT / "rasa.json")], capture_output=True, text=True)
+    if r.returncode:
+        bad.append("canonical validator: " + (r.stdout + r.stderr).strip().splitlines()[-1])
+print(f"check-cards: {n} cards; canonical validator {'ran' if schema else 'SKIPPED (set RASA_SCHEMA_DIR)'}")
+for b in bad:
+    print("  FAIL", b)
+print("check-cards: " + ("GREEN" if not bad else f"{len(bad)} problem(s)"))
+sys.exit(1 if bad else 0)
